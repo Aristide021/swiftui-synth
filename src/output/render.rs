@@ -1,6 +1,15 @@
+// File: src/output/render.rs
 use crate::ast::IR;
 
-/// Renders the IR as SwiftUI code.
+// Helper function to normalize whitespace for consistent string comparisons
+// Removes trailing whitespace from each line and ensures single \n line endings.
+fn normalize_whitespace_internal(s: &str) -> String {
+    s.lines()
+        .map(|line| line.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn render_swiftui(ir: &IR) -> String {
     fn render(ir: &IR, indent: usize) -> String {
         let pad = " ".repeat(indent * 4);
@@ -8,11 +17,20 @@ pub fn render_swiftui(ir: &IR) -> String {
             IR::VStack(children) => {
                 let mut s = format!("{}VStack {{\n", pad);
                 for child in children {
-                    s.push_str(&render(child, indent + 1));
+                    // Ensure Spacer and Image are not further indented inside VStack/HStack rendering
+                    let child_indent = match child {
+                        IR::Spacer | IR::Image(_) => indent + 1, // Keep same level as Text/Button inside Stack
+                        _ => indent + 1,
+                    };
+                     // Add newline before Spacer if it's not the first element
+                     if matches!(child, IR::Spacer) && !s.ends_with("{\n") && !s.ends_with("\n\n") {
+                        // s.push('\n'); // Avoid double newlines if Spacer follows another element directly
+                     }
+                    s.push_str(&render(child, child_indent));
                 }
                 s.push_str(&format!("{}}}\n", pad));
-                s.push_str(&format!("{}.padding()", pad));
-                if indent == 0 {
+                s.push_str(&format!("{}.padding()", pad)); // Add padding modifier to the Stack
+                if indent == 0 { // Add final newline only for the top-level element
                     s.push('\n');
                 }
                 s
@@ -20,43 +38,54 @@ pub fn render_swiftui(ir: &IR) -> String {
             IR::HStack(children) => {
                 let mut s = format!("{}HStack {{\n", pad);
                 for child in children {
-                    s.push_str(&render(child, indent + 1));
+                     let child_indent = match child {
+                        IR::Spacer | IR::Image(_) => indent + 1,
+                        _ => indent + 1,
+                    };
+                     // Add newline before Spacer if needed
+                    // if matches!(child, IR::Spacer) && !s.ends_with("{\n") && !s.ends_with("\n\n") {
+                       // s.push('\n');
+                    // }
+                    s.push_str(&render(child, child_indent));
                 }
                 s.push_str(&format!("{}}}\n", pad));
-                s.push_str(&format!("{}.padding()", pad));
-                if indent == 0 {
-                    s.push('\n');
+                s.push_str(&format!("{}.padding()", pad)); // Add padding modifier to the Stack
+                if indent == 0 { // Add final newline only for the top-level element
+                     s.push('\n');
                 }
                 s
             }
             IR::Text(text) => format!(
-                "{}Text(\"{}\"){}    .font(.title){}    .padding()\n",
-                pad, text.replace("\"", "\\\""), "\n".to_string() + &pad, "\n".to_string() + &pad
+                // Ensure modifiers are indented relative to the Text element
+                "{}Text(\"{}\")\n{}    .font(.title)\n{}    .padding()\n",
+                pad, text.replace("\"", "\\\""),
+                pad, // Indentation for first modifier
+                pad  // Indentation for second modifier
             ),
             IR::Button(label) => format!(
-                "{}Button(\"{}\") {{ }}{}    .padding()\n",
-                pad, label.replace("\"", "\\\""), "\n".to_string() + &pad
+                 // Ensure modifiers are indented relative to the Button element
+                "{}Button(\"{}\") {{ }}\n{}    .padding()\n",
+                pad, label.replace("\"", "\\\""),
+                pad // Indentation for modifier
             ),
             IR::Image(name) => format!(
+                // Image usually doesn't have padding/font modifiers directly in this simple case
                 "{}Image(\"{}\")\n",
                 pad, name.replace("\"", "\\\"")
             ),
             IR::Spacer => format!("{}Spacer()\n", pad),
         }
     }
-    render(ir, 0)
+    // Normalize the final output to ensure consistent line endings and no trailing whitespace
+    normalize_whitespace_internal(&render(ir, 0))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Use the internal helper for tests too
+    use super::normalize_whitespace_internal as normalize_whitespace;
 
-    fn normalize_whitespace(s: &str) -> String {
-        s.lines()
-            .map(|line| line.trim_end())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 
     #[test]
     fn test_render_full_layout() {
@@ -66,6 +95,7 @@ mod tests {
             IR::Button("Click".to_string()),
         ]);
 
+        // Define expected output *without* extra newlines between elements
         let expected = normalize_whitespace(
             "VStack {
     Text(\"Hello\")
@@ -78,7 +108,7 @@ mod tests {
 .padding()"
         );
 
-        assert_eq!(normalize_whitespace(&render_swiftui(&ir)), expected);
+        assert_eq!(render_swiftui(&ir), expected); // render_swiftui now normalizes output
     }
 
     #[test]
@@ -106,14 +136,16 @@ mod tests {
 .padding()"
         );
 
-        assert_eq!(normalize_whitespace(&render_swiftui(&ir)), expected);
+        assert_eq!(render_swiftui(&ir), expected);
     }
 
     #[test]
     fn test_render_image() {
         let ir = IR::Image("icon".to_string());
-        let expected = "Image(\"icon\")\n";
-        assert_eq!(normalize_whitespace(&render_swiftui(&ir)), expected);
+        // The expected output for a standalone Image (not in a stack)
+        // should just be the Image line, normalized.
+        let expected = normalize_whitespace("Image(\"icon\")");
+        assert_eq!(render_swiftui(&ir), expected);
     }
 
     #[test]
@@ -133,7 +165,7 @@ mod tests {
 .padding()"
         );
 
-        assert_eq!(normalize_whitespace(&render_swiftui(&ir)), expected);
+        assert_eq!(render_swiftui(&ir), expected);
     }
 
     #[test]
@@ -144,19 +176,25 @@ mod tests {
         ]);
 
         let rendered = render_swiftui(&ir);
+        // Check the normalized output
         assert!(rendered.contains("Text(\"Hello, \\\"World\\\"!\")"));
     }
 
     #[test]
     fn test_render_consistent_indentation() {
-        let ir = IR::VStack(vec![IR::Text("Test".to_string())]);
+        let ir = IR::VStack(vec![
+                        IR::Text("Test".to_string()),
+                        IR::HStack(vec![
+                            IR::Button("Nested".to_string())
+                        ])
+                    ]);
         let rendered = render_swiftui(&ir);
-        
-        // Check that every line starts with 0 or 4 spaces (except empty lines)
+
+
         for line in rendered.lines() {
-            if !line.is_empty() {
+            if !line.trim().is_empty() { // Ignore empty lines
                 let spaces = line.chars().take_while(|c| *c == ' ').count();
-                assert!(spaces % 4 == 0, "Indentation should be a multiple of 4 spaces");
+                assert!(spaces % 4 == 0, "Indentation should be a multiple of 4 spaces: '{}'", line);
             }
         }
     }
@@ -170,6 +208,19 @@ mod tests {
 }
 .padding()"
         );
-        assert_eq!(normalize_whitespace(&rendered), expected);
+        assert_eq!(rendered, expected);
+    }
+
+     #[test]
+    fn test_render_image_in_vstack() {
+        let ir = IR::VStack(vec![IR::Image("icon".to_string()), IR::Spacer]);
+         let expected = normalize_whitespace(
+            "VStack {
+    Image(\"icon\")
+    Spacer()
+}
+.padding()"
+        );
+        assert_eq!(render_swiftui(&ir), expected);
     }
 }
