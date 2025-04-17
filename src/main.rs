@@ -36,10 +36,6 @@ fn main() -> Result<(), String> {
         _ => return Err("Please provide either --examples or --examples-file".to_string()),
     };
 
-    // Debug: Print the received example string and its bytes
-    eprintln!("Received examples string: {}", examples_str);
-    eprintln!("String as bytes: {:?}", examples_str.as_bytes());
-
     // Parse examples
     let examples = input::parser::parse_examples(&examples_str)
         .map_err(|e| format!("Failed to parse examples: {}", e))?;
